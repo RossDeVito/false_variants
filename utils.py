@@ -186,7 +186,6 @@ def load_preprocessed(path):
 	return data['fragments'], data['qualities'], data['variant_labels']
 
 
-
 if __name__ == '__main__':
 	fragments_path='data/fragments/chr20_1-500K/fragments.txt'
 	longshot_vcf_path='data/fragments/chr20_1-500K/1.0.potential_SNVs.vcf'
