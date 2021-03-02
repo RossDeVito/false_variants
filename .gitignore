@@ -1,3 +1,9 @@
+# Data files too large
+data/GIAB/*
+!data/GIAB/README.md
+data/preprocessed/*
+!data/preprocessed/chr20_1-500k
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
