@@ -172,6 +172,20 @@ def matrix_sparsity_info(allele_mat, print_info=False):
 	return sample_reads, site_reads
 
 
+def save_preprocessed(path, fragments, qualities, variant_labels):
+	np.savez(
+		path, 
+		fragments=fragments,
+		qualities=qualities,
+		variant_labels=variant_labels)
+
+
+def load_preprocessed(path):
+	''' Returns (fragments, qualities, variant_labels) from .npz '''
+	data = np.load(path)
+	return data['fragments'], data['qualities'], data['variant_labels']
+
+
 if __name__ == '__main__':
 	fragments_path='data/fragments/chr20_1-500K/fragments.txt'
 	longshot_vcf_path='data/fragments/chr20_1-500K/1.0.potential_SNVs.vcf'
@@ -181,10 +195,25 @@ if __name__ == '__main__':
 	_, fragments, qualities = read_fragments(fragments_path)
 
 	print('Original fragments:')
-	matrix_sparsity_info(allele_mat, print_info=True)
+	matrix_sparsity_info(fragments, print_info=True)
 
 	# get real/false variant labels
 	variant_labels = get_true_variants(
 		longshot_vcf_path=longshot_vcf_path,
 		ground_truth_vcf_path=ground_truth_vcf_path
 	)
+
+	# save preprocessed data
+	save_preprocessed(
+		'data/preprocessed/chr20_1-500K.npz',
+		fragments,
+		qualities,
+		variant_labels
+	)
+
+	# load preprocessed data
+	fragments, qualities, variant_labels = load_preprocessed(
+		'data/preprocessed/chr20_1-500K.npz'
+	)
+	print('Original fragments reloaded as preprocessed:')
+	matrix_sparsity_info(fragments, print_info=True)
