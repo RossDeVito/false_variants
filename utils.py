@@ -85,7 +85,35 @@ def read_fragments_arrays(fragments_path):
 		)
 
 
-def get_true_variants(longshot_vcf_path, ground_truth_vcf_path,
+def get_bed_mask(bed_path, ls_callset_pos, chrom='chr20'):
+	''' 
+	Reads areas in GIAB from .bed and uses to mask longshot callset positions
+	'''
+	with open(bed_path) as f:
+		starts = []
+		ends = []
+
+		for line in f:
+			line_data = line.strip().split()
+
+			if line_data[0] == chrom:
+				starts.append(line_data[1])
+				ends.append(line_data[2])
+
+	starts = np.array(starts).astype(int)
+	ends = np.array(ends).astype(int)
+
+	in_bed_range = []
+
+	for ls_pos in ls_callset_pos:
+		in_bed_range.append(
+			np.any((starts <= ls_pos) & (ends > ls_pos))
+		)
+
+	return np.array(in_bed_range)
+
+
+def get_true_variants(longshot_vcf_path, ground_truth_vcf_path, giab_bed_path,
 						return_vcfs=False):
 	''' 
 	Finds true/false variants in fragments file using GIAB ground truth vcf
@@ -94,12 +122,14 @@ def get_true_variants(longshot_vcf_path, ground_truth_vcf_path,
 		longshot_vcf_path: path to "4.0.final_genotypes.vcf" for longshot run
 			that produced the fragments.txt file being used
 		ground_truth_vcf_path: path to GIAB ground truth vcf
+		giab_bed_path: giab ground truth corresponding .bed
 		return_vcfs: if the longshot and ground_truth vcfs should be returned.
 			Will be returned as callsets
 	
 	Returns:
 		array length of number of cols of fragments matrix where each is
 			labeled True/False wrt being real variants
+		site_mask to use to filter columns of fragments matrix
 		if return_vcfs, returns (true_variants, longshot_vcf, ground_truth_vcf)
 	'''
 	# load vcf from longshot run
@@ -114,10 +144,20 @@ def get_true_variants(longshot_vcf_path, ground_truth_vcf_path,
 
 	in_truth = np.in1d(ls_callset['variants/POS'], callset['variants/POS'])
 
+	# mask out regions not in .bed
+	in_bed_mask = get_bed_mask(giab_bed_path, ls_callset['variants/POS'])
+
+	# find where longshot predicts heterozygous
+	ls_01 = np.all(np.equal(ls_callset['calldata/GT'], [0,1]), axis=2).T[0]
+	ls_10 = np.all(np.equal(ls_callset['calldata/GT'], [1,0]), axis=2).T[0]
+	ls_hetero = ls_01 | ls_10
+
+	site_mask = in_bed_mask & ls_hetero
+
 	if return_vcfs:
-		return in_truth.astype(int), ls_callset, callset
+		return in_truth.astype(int)[site_mask], site_mask, ls_callset, callset
 	else:
-		return in_truth.astype(int)
+		return in_truth.astype(int)[site_mask], site_mask
 
 
 def mask_callset(callset, mask):
@@ -188,8 +228,9 @@ def load_preprocessed(path):
 
 if __name__ == '__main__':
 	fragments_path='data/fragments/chr20_1-500K/fragments.txt'
-	longshot_vcf_path='data/fragments/chr20_1-500K/1.0.potential_SNVs.vcf'
+	longshot_vcf_path='data/fragments/chr20_1-500K/2.0.realigned_genotypes.vcf'
 	ground_truth_vcf_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.vcf'
+	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
 	
 	# load read fragments and their qualities
 	_, fragments, qualities = read_fragments(fragments_path)
@@ -198,10 +239,19 @@ if __name__ == '__main__':
 	matrix_sparsity_info(fragments, print_info=True)
 
 	# get real/false variant labels
-	variant_labels = get_true_variants(
+	variant_labels, site_mask, ls_callset, callset = get_true_variants(
 		longshot_vcf_path=longshot_vcf_path,
-		ground_truth_vcf_path=ground_truth_vcf_path
+		ground_truth_vcf_path=ground_truth_vcf_path,
+		giab_bed_path=giab_bed_path,
+		return_vcfs=True
 	)
+
+	# mask these with site_mask
+	fragments = fragments[:, site_mask]
+	qualities = qualities[:, site_mask]
+
+	print('New fragments:')
+	matrix_sparsity_info(fragments, print_info=True)
 
 	# save preprocessed data
 	save_preprocessed(
@@ -215,5 +265,5 @@ if __name__ == '__main__':
 	fragments, qualities, variant_labels = load_preprocessed(
 		'data/preprocessed/chr20_1-500K.npz'
 	)
-	print('Original fragments reloaded as preprocessed:')
+	print('New fragments reloaded as preprocessed:')
 	matrix_sparsity_info(fragments, print_info=True)
