@@ -22,6 +22,11 @@ def get_connections(site1, site2):
 	return (~np.isnan(site1)) & (~np.isnan(site2))
 
 
+def get_best_f1_ind(precision, recall):
+	fscore = (2 * precision * recall) / (precision + recall)
+	return np.argmax(fscore)
+
+
 if __name__ == '__main__':
 	# load preprocessed data
 	fragments, qualities, variant_labels = load_preprocessed(
