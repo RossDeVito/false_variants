@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -22,7 +20,7 @@ def get_connections(site1, site2):
 if __name__ == '__main__':
 	# load preprocessed data
 	fragments, qualities, variant_labels = load_preprocessed(
-		'data/preprocessed/chr20_1-500K.npz'
+		'data/preprocessed/chr20_1-5M.npz'
 	)
 	matrix_sparsity_info(fragments, print_info=True)
 
@@ -31,7 +29,6 @@ if __name__ == '__main__':
 
 	edges = np.ma.masked_all((fragments.shape[1], fragments.shape[1]))
 	homo_edges = np.ma.masked_all((fragments.shape[1], fragments.shape[1]))
-	comp_edges = np.ma.masked_all((fragments.shape[1], fragments.shape[1]))
 
 	for i, j in tqdm(zip(*np.tril_indices(fragments.shape[1], k=-1)), 
 					desc='edges',
@@ -54,31 +51,27 @@ if __name__ == '__main__':
 		edges[j,i] = v_measure
 
 		# directed edges
+		# 	out homogeneity is the same as in completeness
+		#	in homogeneity is the same as out completeness
 		homo_edges[i,j] = homo
 		homo_edges[j,i] = comp
-
-		comp_edges[i,j] = comp
-		comp_edges[j,i] = homo
 
 	# get average of edges
 	edges_mean = edges.mean(axis=1)
 	edges_mean = edges_mean.filled(edges_mean.mean())
+ 
+	np.save('data/results/v_measure_5M.npy', edges_mean)
 
 	# get homogeneity
 	out_mean = homo_edges.mean(axis=1)
 	out_mean = out_mean.filled(out_mean.mean())
 
-	# np.save('data/results/cond_ent_out_5M.npy', out_mean)
+	np.save('data/results/homogeneity_out_5M.npy', out_mean)
 
 	in_mean = homo_edges.mean(axis=0)
 	in_mean = in_mean.filled(in_mean.mean())
-
-	# get completeness
-	out_mean_comp = comp_edges.mean(axis=1)
-	out_mean_comp = out_mean_comp.filled(out_mean_comp.mean())
-
-	in_mean_comp = comp_edges.mean(axis=0)
-	in_mean_comp = in_mean_comp.filled(in_mean_comp.mean())
+ 
+	np.save('data/results/homogeneity_in_5M.npy', in_mean)
 
 	# plot distributions
 	df = pd.DataFrame(
@@ -86,11 +79,9 @@ if __name__ == '__main__':
 			edges_mean,
 			out_mean,
 			in_mean,
-			out_mean_comp,
-			in_mean_comp,
 			variant_labels
 		)),
-		columns=['v measure', 'homo out', 'homo in', 'comp out', 'comp in', 'label'],
+		columns=['v measure', 'homo out', 'homo in', 'label'],
 	)
 
 	# sns.displot(df, x='v measure', hue='label', multiple="dodge", 
@@ -105,13 +96,11 @@ if __name__ == '__main__':
 
 	# box plots
 	sns.boxplot(
-		x=(['min'] * len(variant_labels) 
+		x=(['v measure'] * len(variant_labels) 
 			+ ['out homogeneity'] * len(variant_labels)
-			+ ['in homogeneity'] * len(variant_labels)
-			+ ['out completeness'] * len(variant_labels)
-			+ ['in completeness'] * len(variant_labels)),
-		y=np.hstack((edges_mean, out_mean, in_mean, out_mean_comp, in_mean_comp)), 
-		hue=np.hstack((variant_labels, variant_labels, variant_labels, variant_labels, variant_labels))
+			+ ['in homogeneity'] * len(variant_labels)),
+		y=np.hstack((edges_mean, out_mean, in_mean)), 
+		hue=np.hstack((variant_labels, variant_labels, variant_labels))
 	)
 	plt.show()
 
@@ -134,25 +123,11 @@ if __name__ == '__main__':
 
 	print('AUC homogeneity in: {}'.format(roc_auc_score(variant_labels, in_mean)))
 
-	out_precision_comp, out_recall_comp, _ = precision_recall_curve(
-		variant_labels, -out_mean_comp, pos_label=0)
-	out_fpr_comp, out_tpr_comp, _ = roc_curve(variant_labels, -out_mean_comp, pos_label=0)
-
-	print('AUC completeness out: {}'.format(roc_auc_score(variant_labels, out_mean_comp)))
-
-	in_precision_comp, in_recall_comp, _ = precision_recall_curve(
-		variant_labels, -in_mean_comp, pos_label=0)
-	in_fpr_comp, in_tpr_comp, _ = roc_curve(variant_labels, -in_mean, pos_label=0)
-
-	print('AUC completeness in: {}'.format(roc_auc_score(variant_labels, in_mean_comp)))
-
 	plt.subplots()
 	plt.subplot(1,2,1)
 	plt.plot(recall, precision, label='min')
 	plt.plot(out_recall, out_precision, label='out homogeneity')
 	plt.plot(in_recall, in_precision, label='in homogeneity')
-	plt.plot(out_recall_comp, out_precision_comp, label='out completeness')
-	plt.plot(in_recall_comp, in_precision_comp, label='in completeness')
 	plt.xlabel('false variant recall')
 	plt.xlim(0, 1.01)
 	plt.ylabel('false variant precision')
@@ -166,8 +141,6 @@ if __name__ == '__main__':
 	plt.plot(fpr, tpr, label='min')
 	plt.plot(out_fpr, out_tpr, label='out homogeneity')
 	plt.plot(in_fpr, in_tpr, label='in homogeneity')
-	plt.plot(out_fpr_comp, out_tpr_comp, label='out completeness')
-	plt.plot(in_fpr_comp, in_tpr_comp, label='in completeness')
 	plt.xlabel('false positive rate (positive label: false variant)')
 	plt.xlim(0, 1.01)
 	plt.ylabel('true positive rate')

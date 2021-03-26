@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from sklearn.metrics import matthews_corrcoef
 from sklearn.metrics import precision_recall_curve, roc_curve
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, classification_report
 
 from utils import load_preprocessed, matrix_sparsity_info
 
@@ -68,7 +68,7 @@ if __name__ == '__main__':
 	edges_mean = edges.mean(axis=1)
 	edges_mean = edges_mean.filled(edges_mean.mean())
 
-	np.save('data/results/phi_correlation_5M.npy', -edges_mean)
+	np.save('data/results/phi_correlation_5M.npy', edges_mean)
 
 	reweighted_edges = edges_mean * edges
 
@@ -101,11 +101,16 @@ if __name__ == '__main__':
 	plt.show()
 
 	# plot precision recall and roc curves
-	precision, recall, _ = precision_recall_curve(
+	precision, recall, threshold = precision_recall_curve(
 		variant_labels, -edges_mean, pos_label=0)
 	fpr, tpr, _ = roc_curve(variant_labels, -edges_mean, pos_label=0)
+ 
+	phi_thresh = threshold[get_best_f1_ind(precision, recall)]
+	pred_y = edges_mean > (-phi_thresh)
 
 	print('AUC: {}'.format(roc_auc_score(variant_labels, edges_mean)))
+	print(classification_report(variant_labels, pred_y, labels=[0,1],
+                             	target_names=['false variant', 'true variant']))
 
 	rw_precision, rw_recall, _ = precision_recall_curve(
 		variant_labels, -rw_edges_mean, pos_label=0)

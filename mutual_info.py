@@ -24,7 +24,7 @@ def get_connections(site1, site2):
 if __name__ == '__main__':
 	# load preprocessed data
 	fragments, qualities, variant_labels = load_preprocessed(
-		'data/preprocessed/chr20_1-500K.npz'
+		'data/preprocessed/chr20_1-5M.npz'
 	)
 	matrix_sparsity_info(fragments, print_info=True)
 
@@ -88,17 +88,27 @@ if __name__ == '__main__':
 	rand_mean = rand_edges.mean(axis=1)
 	rand_mean = rand_mean.filled(rand_mean.mean())
 
+	np.save('data/results/rand_index_5M.npy', rand_mean)
+
 	adj_rand_mean = adj_rand_edges.mean(axis=1)
 	adj_rand_mean = adj_rand_mean.filled(adj_rand_mean.mean())
+
+	np.save('data/results/adj_rand_index_5M.npy', adj_rand_mean)
 
 	mi_mean = mi_edges.mean(axis=1)
 	mi_mean = mi_mean.filled(mi_mean.mean())
 
+	np.save('data/results/mutual_info_5M.npy', mi_mean)
+
 	ami_mean = ami_edges.mean(axis=1)
 	ami_mean = ami_mean.filled(ami_mean.mean())
 
+	np.save('data/results/adj_mutual_info_5M.npy', ami_mean)
+
 	nmi_mean = nmi_edges.mean(axis=1)
 	nmi_mean = nmi_mean.filled(nmi_mean.mean())
+
+	np.save('data/results/norm_mutual_info_5M.npy', nmi_mean)
 
 	# plot distributions
 	df = pd.DataFrame(

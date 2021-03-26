@@ -4,7 +4,7 @@ from utils import *
 if __name__ == '__main__':
 	fragments_path='data/fragments/chr20_1-5M/fragments.txt'
 	longshot_vcf_path='data/fragments/chr20_1-5M/2.0.realigned_genotypes.vcf'
-	ground_truth_vcf_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.vcf'
+	ground_truth_vcf_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.vcf.gz'
 	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
 	
 	# load read fragments and their qualities
