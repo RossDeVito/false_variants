@@ -17,11 +17,35 @@ def get_best_f1(precision, recall, thresholds):
 	numerator = 2 * recall * precision
 	denom = recall + precision
 	f1_scores = np.divide(numerator, denom, out=np.zeros_like(denom), where=(denom!=0))
-	print('Best threshold: ', np.abs(thresholds[np.argmax(f1_scores)]))
-	print('Best F1-Score: ', np.max(f1_scores))
 
 	return np.max(f1_scores), thresholds[np.argmax(f1_scores)]
 
+
+def get_cm_at_cutoff(cutoff, scores, variant_labels, pos_label=0, normalize=None):
+	''' 
+	Return confusion matrix and best f1 score (if cutoff is 'f1' else None) 
+	'''
+	precision, recall, thresholds = precision_recall_curve(
+		variant_labels, -scores, pos_label=pos_label
+	)
+
+	if cutoff == 'f1':
+		best_f1, thresh = get_best_f1(precision, recall, thresholds)
+
+		preds = scores > -thresh
+
+		return confusion_matrix(variant_labels, preds, normalize=normalize), best_f1
+	else:
+		thresh_ind = np.where(precision > cutoff)[0].min()
+
+		if thresh_ind < len(thresholds):
+			thresh = -thresholds[thresh_ind]
+		else:
+			thresh = 0
+
+		preds = scores > thresh
+
+		return confusion_matrix(variant_labels, preds, normalize=normalize), None
 
 if __name__ == '__main__':
 	# load preprocessed data
@@ -31,27 +55,36 @@ if __name__ == '__main__':
 
 	save_dir = 'data/results'
 	
-	res_saves = [
-		('fisher_p05_5M.npy', 'fisher .05'),
-		('fisher_p01_5M.npy', 'fisher .01'),
-		('fisher_p005_5M.npy', 'fisher .005'),
-		('chi_p05_5M.npy', 'chi .05'),
-		('chi_p01_5M.npy', 'chi .01'),
-		('chi_p005_5M.npy', 'chi .005'),
-		('phi_correlation_5M.npy', 'phi correlation')
-	]
+	# # original
+	# res_saves = [
+	# 	('phi_correlation_5M.npy', 'phi correlation'),
+	# 	#('fisher_p05_5M.npy', 'fisher .05'),
+	# 	('fisher_p01_5M.npy', 'fisher .01'),
+	# 	#('fisher_p005_5M.npy', 'fisher .005'),
+	# 	#('chi_p05_5M.npy', 'chi .05'),
+	# 	('chi_p01_5M.npy', 'chi .01'),
+	# 	#('chi_p005_5M.npy', 'chi .005'),
+	# ]
 
-	results = [(np.load(os.path.join(save_dir, s[0])), s[1]) for s in res_saves]
+	# # top scores
+	# res_saves = [
+	# 	('phi_correlation_5M.npy', 'phi correlation'),
+	# 	('adj_rand_index_5M.npy', 'adj. rand'),
+	# 	('norm_mutual_info_5M.npy', 'NMI'),
+	# 	('homogeneity_out_5M.npy', 'homo. out'),
+	# ]
 
-	for i, r in enumerate(results):
-		print(r[1])
+	# results = [(np.load(os.path.join(save_dir, s[0])), s[1]) for s in res_saves]
 
-		# flip
-		if r[1] == 'phi correlation':
-			results[i] = (-r[0], r[1])
+	# for i, r in enumerate(results):
+	# 	print(r[1])
 
-		get_best_f1(*precision_recall_curve(variant_labels, -results[i][0], pos_label=0))
-		print()
+	# 	# # flip
+	# 	# if r[1] == 'phi correlation':
+	# 	# 	results[i] = (-r[0], r[1])
+
+	# 	get_best_f1(*precision_recall_curve(variant_labels, -results[i][0], pos_label=0))
+	# 	print()
 
 	# # box plots
 	# x = []
@@ -70,89 +103,84 @@ if __name__ == '__main__':
 	# )
 	# plt.show()
 
-	# get confusion matrices at different cuttoffs
+	# # get confusion matrices at different cuttoffs
 
-	fig, axs = plt.subplots(2, 5)
+	# cutoffs = [.999, .99, .985, .9825, .98, .975, 'f1']
 
-	for i, r in enumerate(results):
-		precision, recall, thresholds = precision_recall_curve(
-			variant_labels, -r[0], pos_label=0
-		)
+	# # plot all at cutoffs
+	# fig, axs = plt.subplots(len(results), len(cutoffs))
 
-		thresh = -thresholds[-1]
+	# for j, r in enumerate(results):
+	# 	for i, c in enumerate(cutoffs):
+	# 		cm, best_f1 = get_cm_at_cutoff(c, r[0], variant_labels)
+			
+	# 		ax = axs[j, i]
+	# 		sns.heatmap(cm, annot=True, ax=ax, fmt='g', cbar=False)
+	# 		ax.set_xlabel('Predicted labels')
+	# 		if i == 0:
+	# 			ax.set_ylabel(r[1], rotation=90, size='large')
+	# 		else:
+	# 			ax.set_ylabel('True labels')
+	# 		if c == 'f1':
+	# 			ax.set_title('best f1 (prec = {:.3})'.format(best_f1))
+	# 		else:
+	# 			ax.set_title('precision > {:.4}'.format(c)) 
+	# 		ax.xaxis.set_ticklabels(['false', 'true'])
+	# 		ax.yaxis.set_ticklabels(['true', 'false'])
+	# 		ax.set_aspect("equal")
 
-		preds = r[0] > thresh
+	# fig.suptitle("Confusion Matrices at False Variant Precision Thresholds")
+	# plt.show()
 
-		cm = confusion_matrix(variant_labels, preds)#, normalize='true')
+	# plot test based at different p-vals
+	n_p_vals = 5
+	normalize = 'true'
 
-		ax	= axs[i,0]
-		sns.heatmap(cm, annot=True, ax = ax, fmt='g')
-		ax.set_xlabel('Predicted labels')
-		ax.set_ylabel('True labels')
-		ax.set_title('Best Precision ({:.3})'.format(precision[-2])) 
-		# ax.xaxis.set_ticklabels(['business', 'health'])
-		# ax.yaxis.set_ticklabels(['health', 'business'])
+	test_saves = [
+		[
+			('fisher_p1_5M.npy', .1),
+			('fisher_p05_5M.npy', .05),
+			('fisher_p01_5M.npy', .01),
+			('fisher_p005_5M.npy', .005),
+			('fisher_p001_5M.npy', .001),
+			'Fisher'
+		], [
+			('chi_p1_5M.npy', .1),
+			('chi_p05_5M.npy', .05),
+			('chi_p01_5M.npy', .01),
+			('chi_p005_5M.npy', .005),
+			('chi_p001_5M.npy', .001),
+			'Chi^2'
+		]
+	]
 
-		thresh_ind = np.where(precision > .98)[0].min()
+	test_results = []
 
-		thresh = -thresholds[thresh_ind]
+	for test_res_files in test_saves:
+		test_name = test_res_files.pop()
+		test_res = [(np.load(os.path.join(save_dir, s[0])), s[1]) for s in test_res_files]
 
-		preds = r[0] > thresh
+		test_results.append( (test_res, test_name) )
 
-		cm = confusion_matrix(variant_labels, preds)#, normalize='true')
+	fig, axs = plt.subplots(len(test_results), n_p_vals)
 
-		ax	= axs[i,1]
-		sns.heatmap(cm, annot=True, ax = ax, fmt='g')
-		ax.set_xlabel('Predicted labels')
-		ax.set_ylabel('True labels')
-		ax.set_title('Precision > .98') 
-		# ax.xaxis.set_ticklabels(['business', 'health'])
-		# ax.yaxis.set_ticklabels(['health', 'business'])
+	for j, r in enumerate(test_results):
+		for i, (scores, p_val) in enumerate(r[0]):
 
-		thresh_ind = np.where(precision > .975)[0].min()
+			preds = (~(scores == 0)).astype(int)
+			cm = confusion_matrix(variant_labels, preds, normalize=normalize)
+			
+			ax = axs[j, i]
+			sns.heatmap(cm, annot=True, ax=ax, fmt='.3g', cbar=False)
+			ax.set_xlabel('predicted labels')
+			if i == 0:
+				ax.set_ylabel(r[1], rotation=90, size='large')
+			else:
+				ax.set_ylabel('true labels')
+			ax.set_title('p-val < {}'.format(p_val)) 
+			ax.xaxis.set_ticklabels(['false', 'true'])
+			ax.yaxis.set_ticklabels(['true', 'false'])
+			ax.set_aspect("equal")
 
-		thresh = -thresholds[thresh_ind]
-
-		preds = r[0] > thresh
-
-		cm = confusion_matrix(variant_labels, preds)#, normalize='true')
-
-		ax	= axs[i,2]
-		sns.heatmap(cm, annot=True, ax = ax, fmt='g')
-		ax.set_xlabel('Predicted labels')
-		ax.set_ylabel('True labels')
-		ax.set_title('Precision > .975') 
-		# ax.xaxis.set_ticklabels(['business', 'health'])
-		# ax.yaxis.set_ticklabels(['health', 'business'])
-
-		thresh_ind = np.where(precision > .95)[0].min()
-
-		thresh = -thresholds[thresh_ind]
-
-		preds = r[0] > thresh
-
-		cm = confusion_matrix(variant_labels, preds)#, normalize='true')
-
-		ax	= axs[i,3]
-		sns.heatmap(cm, annot=True, ax = ax, fmt='g')
-		ax.set_xlabel('Predicted labels')
-		ax.set_ylabel('True labels')
-		ax.set_title('Precision > .95') 
-		# ax.xaxis.set_ticklabels(['business', 'health'])
-		# ax.yaxis.set_ticklabels(['health', 'business'])
-
-		best_f1, thresh = get_best_f1(precision, recall, thresholds)
-
-		preds = r[0] > -thresh
-
-		cm = confusion_matrix(variant_labels, preds)#, normalize='true')
-
-		ax	= axs[i,4]
-		sns.heatmap(cm, annot=True, ax = ax, fmt='g')
-		ax.set_xlabel('Predicted labels')
-		ax.set_ylabel('True labels')
-		ax.set_title('Best f1 ({:.3})'.format(best_f1)) 
-		# ax.xaxis.set_ticklabels(['business', 'health'])
-		# ax.yaxis.set_ticklabels(['health', 'business'])
-
-		break
+	fig.suptitle("Removing Sites Statistically Independant of All Other Sites (with recall)")
+	plt.show()
