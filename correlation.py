@@ -30,7 +30,7 @@ def get_best_f1_ind(precision, recall):
 if __name__ == '__main__':
 	# load preprocessed data
 	fragments, qualities, variant_labels = load_preprocessed(
-		'data/preprocessed/chr20_1-5M.npz'
+		'data/preprocessed/chr20_1-1M.npz'
 	)
 	matrix_sparsity_info(fragments, print_info=True)
 
@@ -68,7 +68,7 @@ if __name__ == '__main__':
 	edges_mean = edges.mean(axis=1)
 	edges_mean = edges_mean.filled(edges_mean.mean())
 
-	np.save('data/results/phi_correlation_5M.npy', edges_mean)
+	np.save('data/results/phi_correlation_1M.npy', edges_mean)
 
 	reweighted_edges = edges_mean * edges
 
