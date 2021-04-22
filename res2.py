@@ -157,6 +157,7 @@ if __name__ == '__main__':
 		('likelihood_w2_1M.npy', 'likelihood w=2'),
 		('likelihood_w3_1M.npy', 'likelihood w=3'),
 		('likelihood_w4_1M.npy', 'likelihood w=4'),
+		('likelihood_w5_1M.npy', 'likelihood w=5'),
 	]
 
 	results = [(np.load(os.path.join(save_dir, s[0])), s[1]) for s in res_saves]
