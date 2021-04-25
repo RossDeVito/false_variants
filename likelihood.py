@@ -12,7 +12,7 @@ from tqdm import tqdm
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.metrics import precision_recall_curve, roc_curve
 
-from utils import load_data, matrix_sparsity_info
+from utils import load_data, load_longshot_data, matrix_sparsity_info
 
 
 np.set_printoptions(edgeitems=5, linewidth=1000)
@@ -114,6 +114,35 @@ def gen_H(H_len, monitor_ind=None):
 			yield np.array(this_H).T
 
 
+def gen_H_2(H_len, monitor_ind):
+	'''
+	Generator that yields all needed H matrices to test monitor_ind
+	as (2, H_len) dim numpy arrays. Yields a tuple where the first 
+	element is the H matrix and the second element is:
+		0 if monitor ind in the generated H is 0/0
+		1 if 1/1
+		2 if 0/1
+	'''
+	for hap in product([0,1,2,3], repeat=H_len):
+
+		if hap[monitor_ind] == 3:
+			continue
+
+		this_H = []
+
+		for site in hap:
+			if site == 0:
+				this_H.append((0,0))
+			elif site == 1:
+				this_H.append((0,1))
+			elif site == 2:
+				this_H.append((1,1))
+			else:
+				this_H.append((1,0))
+
+		yield np.array(this_H).T, hap[monitor_ind]
+
+
 def site_prob(haplotype_pair, alpha):
 	''' Return prior probability of a haplotype pair '''
 	if haplotype_pair[0] == 0 and haplotype_pair[1] == 0:
@@ -126,14 +155,14 @@ def site_prob(haplotype_pair, alpha):
 
 def zygosity_probabilities(fragments, qualities, site_ind, alpha, progress_bar=False):
 	'''
-	Return (P(0|0), P(1|1), P(0|1), P(1|0)) for site in given matrices 
+	Return (P(0/0), P(0/1), P(1/1)) for site in given matrices 
 	by using sumation of probabilities with all posible H.
 	'''
 	window_size = fragments.shape[1]
-	probs = [0., 0., 0., 0.]
+	probs = [0., 0., 0.]
 
-	for H, zygosity in tqdm(gen_H(window_size, site_ind), 
-							total=4 ** window_size,
+	for H, zygosity in tqdm(gen_H_2(window_size, site_ind), 
+							total=3 * 4 ** (window_size-1),
 							disable=not progress_bar):
 		obs_prob = frag_mat_likelihood(
 						fragments, 
@@ -149,6 +178,9 @@ def zygosity_probabilities(fragments, qualities, site_ind, alpha, progress_bar=F
 
 
 def mp_run_zygosity_probabilities(args):
+	''' 
+	Unpacks args when running zygosity_probabilities with multiprocessing.
+	'''
 	return zygosity_probabilities(args[0], args[1], 0, args[2])
 
 
@@ -223,7 +255,8 @@ class column_generator():
 
 
 def mp_all_zygosity_probabilities(fragments, qualities, to_test_inds, site_data, 
-									alpha, window_size, n_processes=None):
+									alpha, window_size, n_processes=None,
+									return_probs_mat=False):
 	data_gen = column_generator(alpha, window_size)
 	
 	if n_processes is None:
@@ -246,16 +279,69 @@ def mp_all_zygosity_probabilities(fragments, qualities, to_test_inds, site_data,
 	site_data['window_size'].astype(int)
 	site_data['alpha'] = alpha
 	site_data['P0'] = r[:, 0]
-	site_data['P1'] = r[:, 2:].sum(axis=1)
-	site_data['P2'] = r[:, 1]
+	site_data['P1'] = r[:, 1] * 2.
+	site_data['P2'] = r[:, 2]
 
-	return site_data
+	if return_probs_mat:
+		return site_data, r
+	else:
+		return site_data
+
+
+# Command line tool related below
+def get_site_probabilities(inds, fragments, qualities, alpha, 
+							progress_bar=False):
+	'''
+	Return a site's (P(0/0), P(0/1), P(1/1)) given the site's index
+	and the indices of other sites to compare it with (where 1 + 
+	len(other_sites) is equivalent to the 'window size').
+
+	Args:
+		inds: list of indices to check, where inds[0] is the site being
+			evaluated for. e.g. [site_index, other_ind, other_ind, ...]
+	'''
+	window_size = len(inds)
+
+	probs = [0., 0., 0.]
+
+	frags_at_inds = fragments[:, inds]
+	quals_at_inds = qualities[:, inds]
+
+	for H, zygosity in tqdm(gen_H_2(window_size, 0),
+							desc="Checking possible genotypes",
+							total=3 * 4 ** (window_size-1),
+							disable=not progress_bar):
+		obs_prob = frag_mat_likelihood(
+						frags_at_inds, 
+						quals_at_inds, 
+						H[0], 
+						H[1]
+					)
+		H_prior = H_prob(H, alpha)
+
+		probs[zygosity] += obs_prob * H_prior
+
+	return probs
+
+
+def run_cl_site_probs(fragments_path, longshot_vcf_path, site_inds, alpha, 
+						progress_bar=True):
+	''' Runs site probability cl tool '''
+	print("Loading Longshot output")
+	df, fragments, qualities = load_longshot_data(fragments_path, longshot_vcf_path)
+
+	if not progress_bar:
+		print("Checking possible genotypes")
+	
+	probs = get_site_probabilities(site_inds, fragments, qualities, alpha, True)
+
+	print("P(0/0):\t{}\tP(0/1):\t{}\tP(1/1):\t{}".format(*probs))
 
 
 if __name__ == '__main__':
 	alpha = 0.001 			# user defined for site genotype priors
-	window_size = 5
-	save_results = True
+	window_size = 3
+	save_results = False
 	save_path = 'data/results/1M_predicitions_w{}_a{}.tsv'.format(
 		window_size, str(alpha).split('.')[1])
 
@@ -265,90 +351,50 @@ if __name__ == '__main__':
 	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
 	site_data_save_path='data/preprocessed/1M_site_data.tsv'
 
-	print('Loading data')
-	df, fragments, qualities = load_data(
-		fragments_path, 
-		longshot_vcf_path, 
-		ground_truth_vcf_path,
-		giab_bed_path, 
-		save_path=site_data_save_path)
+	# load data
+	df, fragments, qualities = load_longshot_data(fragments_path, longshot_vcf_path)
 
-	# df = df.sample(10)
+	site_ind = 0
+	cols = np.array([42, 51, 60])
 
-	to_test = np.where(df.in_bed)[0]
+	res = zygosity_probabilities(fragments[:, cols], qualities[:, cols], site_ind, alpha, True)
+	clres = get_site_probabilities(cols, fragments, qualities, alpha, True)
+
+	# run_cl_site_probs(fragments_path, longshot_vcf_path, [3,7,8,9], alpha)
+
+
+
+
+
+
+	## Normal main()
+
+	# print('Loading data')
+	# df, fragments, qualities = load_data(
+	# 	fragments_path, 
+	# 	longshot_vcf_path, 
+	# 	ground_truth_vcf_path,
+	# 	giab_bed_path, 
+	# 	save_path=site_data_save_path)
+
+	## df = df.sample(10)
+
+	# to_test = np.where(df.in_bed)[0]
 	
-	res = mp_all_zygosity_probabilities(
-		fragments,
-		qualities,
-		to_test,
-		df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
-		alpha,
-		window_size
-	)
-
-	res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
-
-	if save_results:
-		res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
-
-
-	# variant_labels = variant_labels[:n]
-	
-
-	# all_probs = mp_all_zygosity_probabilities(
-	# 	fragments, 
+	# res, probs_mat = mp_all_zygosity_probabilities(
+	# 	fragments,
 	# 	qualities,
+	# 	to_test,
+	# 	df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
 	# 	alpha,
 	# 	window_size,
-	# 	n_processes=4)
+	# 	return_probs_mat=True
+	# )
 
-	# p_00 = all_probs[:, 0]
-	# p_11 = all_probs[:, 1]
-	# p_01 = all_probs[:, 2]
-	# p_10 = all_probs[:, 3]
-
-	# pred = p_01 + p_10 >= p_00 + p_11
-
-	# print(classification_report(variant_labels, pred, labels=[0,1],
-	# 							target_names=['false variant', 'true variant']))
-	# cm = confusion_matrix(variant_labels, pred)
-	# print(cm)
-
-	# scores = p_01 + p_10 / p_00 + p_11
+	# res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
 
 	# if save_results:
-	# 	np.save('data/results/likelihood_w{}_1M.npy'.format(window_size), scores)
-	# 	np.save('data/results/likelihood_w{}_p00_1M.npy'.format(window_size), p_00)
-	# 	np.save('data/results/likelihood_w{}_p11_1M.npy'.format(window_size), p_11)
-	# 	np.save('data/results/likelihood_w{}_p01_1M.npy'.format(window_size), p_01)
-	# 	np.save('data/results/likelihood_w{}_p10_1M.npy'.format(window_size), p_10)
+	# 	res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
 
-	# precision, recall, threshold = precision_recall_curve(
-	# 	variant_labels, -scores, pos_label=0)
-	# fpr, tpr, _ = roc_curve(variant_labels, -scores, pos_label=0)
 
-	# plt.subplots()
-	# plt.subplot(1,2,1)
-	# plt.plot(recall, precision, label='window = {}'.format(window_size))
-	# plt.xlabel('false variant recall')
-	# plt.xlim(0, 1.01)
-	# plt.ylabel('false variant precision')
-	# plt.ylim(0, 1.01)
-	# plt.legend()
-	# plt.title('Precision Recall Curve')
-	# plt.gca().set_aspect('equal', adjustable='box')
-	# plt.grid(True)
-
-	# plt.subplot(1,2,2)
-	# plt.plot(fpr, tpr, label='window = {}'.format(window_size))
-	# plt.xlabel('false positive rate (positive label: false variant)')
-	# plt.xlim(0, 1.01)
-	# plt.ylabel('true positive rate')
-	# plt.ylim(0, 1.01)
-	# plt.legend()
-	# plt.title('ROC Curve')
-	# plt.gca().set_aspect('equal', adjustable='box')
-	# plt.grid(True)
-
-	# plt.show()
 	
