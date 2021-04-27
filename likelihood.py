@@ -13,6 +13,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.metrics import precision_recall_curve, roc_curve
 
 from utils import load_data, load_longshot_data, matrix_sparsity_info
+from utils import load_full_data
 
 
 np.set_printoptions(edgeitems=5, linewidth=1000)
@@ -252,12 +253,75 @@ class column_generator():
 
 			yield fragments[:, cols], qualities[:, cols], self.alpha
 
+class closest_cols_generator():
+	def __init__(self, alpha, window_size, hetero_inds):
+		self.alpha = alpha
+		self.window_size = window_size
+		self.hetero_inds = np.array(hetero_inds)
+
+	def gen_cols(self, fragments, qualities, to_test_inds):
+		for i in to_test_inds:
+			cols = [i]
+
+			others = (np.abs(self.hetero_inds - i)).argsort()[:self.window_size]
+			others_inds = self.hetero_inds[others]
+			others_inds = others_inds[others_inds != i][:self.window_size-1]
+			cols = cols + others_inds.tolist()
+
+			yield fragments[:, cols], qualities[:, cols], self.alpha
+
+	def gen_cols_inds(self, fragments, qualities, to_test_inds):
+		for i in to_test_inds:
+			cols = [i]
+
+			others = (np.abs(self.hetero_inds - i)).argsort()[:self.window_size]
+			others_inds = self.hetero_inds[others]
+			others_inds = others_inds[others_inds != i][:self.window_size-1]
+			cols = cols + others_inds.tolist()
+
+			yield cols
+
 
 
 def mp_all_zygosity_probabilities(fragments, qualities, to_test_inds, site_data, 
 									alpha, window_size, n_processes=None,
 									return_probs_mat=False):
 	data_gen = column_generator(alpha, window_size)
+	
+	if n_processes is None:
+		n_processes = psutil.cpu_count(logical=False)
+
+	with Pool(n_processes) as p:
+		r = list(tqdm(
+				p.imap(
+					mp_run_zygosity_probabilities, 
+					data_gen.gen_cols(fragments, qualities, to_test_inds)
+				),
+				total=len(to_test_inds), 
+				desc='Running tests',
+				smoothing=0.1
+			))
+
+	r = np.vstack(r)
+
+	site_data['window_size'] = window_size
+	site_data['window_size'].astype(int)
+	site_data['alpha'] = alpha
+	site_data['P0'] = r[:, 0]
+	site_data['P1'] = r[:, 1] * 2.
+	site_data['P2'] = r[:, 2]
+
+	if return_probs_mat:
+		return site_data, r
+	else:
+		return site_data
+
+
+def mp_zygosity_probabilities(fragments, qualities, to_test_inds, site_data, 
+									hetero_inds, alpha, window_size, 
+									n_processes=None, return_probs_mat=False):
+	''' Checks given inds using closest of predicted hetero sites '''
+	data_gen = closest_cols_generator(alpha, window_size, hetero_inds)
 	
 	if n_processes is None:
 		n_processes = psutil.cpu_count(logical=False)
@@ -338,7 +402,7 @@ def run_cl_site_probs(fragments_path, longshot_vcf_path, site_inds, alpha,
 	print("P(0/0):\t{}\tP(0/1):\t{}\tP(1/1):\t{}".format(*probs))
 
 
-if __name__ == '__main__':
+def main():
 	alpha = 0.001 			# user defined for site genotype priors
 	window_size = 3
 	save_results = False
@@ -351,50 +415,94 @@ if __name__ == '__main__':
 	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
 	site_data_save_path='data/preprocessed/1M_site_data.tsv'
 
-	# load data
-	df, fragments, qualities = load_longshot_data(fragments_path, longshot_vcf_path)
+	print('Loading data')
+	df, fragments, qualities = load_data(
+		fragments_path, 
+		longshot_vcf_path, 
+		ground_truth_vcf_path,
+		giab_bed_path, 
+		save_path=site_data_save_path)
 
-	site_ind = 0
-	cols = np.array([42, 51, 60])
+	# df = df.sample(10)
 
-	res = zygosity_probabilities(fragments[:, cols], qualities[:, cols], site_ind, alpha, True)
-	clres = get_site_probabilities(cols, fragments, qualities, alpha, True)
-
-	# run_cl_site_probs(fragments_path, longshot_vcf_path, [3,7,8,9], alpha)
-
-
-
-
-
-
-	## Normal main()
-
-	# print('Loading data')
-	# df, fragments, qualities = load_data(
-	# 	fragments_path, 
-	# 	longshot_vcf_path, 
-	# 	ground_truth_vcf_path,
-	# 	giab_bed_path, 
-	# 	save_path=site_data_save_path)
-
-	## df = df.sample(10)
-
-	# to_test = np.where(df.in_bed)[0]
+	to_test = np.where(df.in_bed)[0]
 	
-	# res, probs_mat = mp_all_zygosity_probabilities(
-	# 	fragments,
-	# 	qualities,
-	# 	to_test,
-	# 	df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
-	# 	alpha,
-	# 	window_size,
-	# 	return_probs_mat=True
-	# )
+	res, probs_mat = mp_all_zygosity_probabilities(
+		fragments,
+		qualities,
+		to_test,
+		df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
+		alpha,
+		window_size,
+		return_probs_mat=True
+	)
 
-	# res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
+	res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
 
-	# if save_results:
-	# 	res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
+	if save_results:
+		res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
 
+
+if __name__ == '__main__':
+	alpha = 0.001 			# user defined for site genotype priors
+	window_size = 4
+	save_results = True
+	save_path = 'data/results/1M_predicitions_full_closest_w{}_a{}.tsv'.format(
+		window_size, str(alpha).split('.')[1])
+
+	fragments_path='data/fragments/chr20_1-1M/fragments.txt'
+	longshot_vcf_path='data/fragments/chr20_1-1M/2.0.realigned_genotypes.vcf'
+	ground_truth_vcf_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.vcf'
+	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
+	site_data_save_path='data/preprocessed/1M_site_data.tsv'
+
+	# # load data
+	# df, fragments, qualities = load_longshot_data(fragments_path, longshot_vcf_path)
+
+	# site_ind = 0
+	# cols = np.array([42, 51, 60])
+
+	# res = zygosity_probabilities(fragments[:, cols], qualities[:, cols], site_ind, alpha, True)
+	# clres = get_site_probabilities(cols, fragments, qualities, alpha, True)
+
+	# # run_cl_site_probs(fragments_path, longshot_vcf_path, [3,7,8,9], alpha)
+
+
+
+	print('Loading data')
+	df, fragments, qualities = load_full_data(
+		fragments_path, 
+		longshot_vcf_path, 
+		ground_truth_vcf_path,
+		giab_bed_path, 
+		save_path=site_data_save_path)
+
+	df = df[df.pos < 1000000] 		# change this with size of Longshot res used
+
+	# df = df.sample(10)
+
+	to_test = np.where(df.in_bed)[0]
+	
+	res, probs_mat = mp_zygosity_probabilities(
+		fragments,
+		qualities,
+		to_test,
+		df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
+		df[df.ls_hmm_pred_genotype == 1].site_ind.values.astype(int),
+		alpha,
+		window_size,
+		return_probs_mat=True
+	)
+
+	res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
+
+	if save_results:
+		res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
 
 	
+
+
+	'''
+	pre bettwe prob speed:
+		w=3 47 min
+	'''

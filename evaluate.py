@@ -8,6 +8,8 @@ import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.metrics import precision_recall_curve, roc_curve
 
+from utils import load_full_data
+
 
 def plot_curves(variant_labels, curves=[], points=[], pos_label=1, paired=False):
 	if paired:
@@ -106,12 +108,12 @@ def add_predictions(df):
 	# add cols for predictions
 	df['pred_genotype'] = np.argmax(df.iloc[:, -3:].values, axis=1)
 	df['pred_homozygous'] = (df.pred_genotype != 1).astype(int)
-	df['log_ods'] = np.log( (df.P0 + df.P2) / df.P1 )
+	df['log_odds'] = np.log( (df.P0 + df.P2) / df.P1 )
 
 	return df
 
-if __name__ == '__main__':
-	append_and_save = True
+def main():
+	append_and_save = False
 	save_path = 'data/results/1M_predicitions_joined.tsv'
 
 	# paired=True
@@ -132,15 +134,20 @@ if __name__ == '__main__':
 	# 	'data/results/1M_predicitions_w4_a001.tsv',
 	# 	'data/results/1M_predicitions_w5_a001.tsv',
 	# ]
+	# files_to_eval = [
+	# 	'data/results/1M_predicitions_w1_a001.tsv',
+	# 	'data/results/1M_predicitions_w1_a0015.tsv',
+	# 	'data/results/1M_predicitions_w2_a001.tsv',
+	# 	'data/results/1M_predicitions_w2_a0015.tsv',
+	# 	'data/results/1M_predicitions_w3_a001.tsv',
+	# 	'data/results/1M_predicitions_w3_a0015.tsv',
+	# 	'data/results/1M_predicitions_w4_a001.tsv',
+	# 	'data/results/1M_predicitions_w5_a001.tsv',
+	# ]
 	files_to_eval = [
-		'data/results/1M_predicitions_w1_a001.tsv',
-		'data/results/1M_predicitions_w1_a0015.tsv',
-		'data/results/1M_predicitions_w2_a001.tsv',
-		'data/results/1M_predicitions_w2_a0015.tsv',
-		'data/results/1M_predicitions_w3_a001.tsv',
-		'data/results/1M_predicitions_w3_a0015.tsv',
-		'data/results/1M_predicitions_w4_a001.tsv',
-		'data/results/1M_predicitions_w5_a001.tsv',
+		'data/results/1M_predicitions_full_closest_w2_a001.tsv',
+		'data/results/1M_predicitions_full_closest_w3_a001.tsv',
+		'data/results/1M_predicitions_full_closest_w4_a001.tsv',
 	]
 
 	results = []
@@ -168,12 +175,16 @@ if __name__ == '__main__':
 	# print(classification_report(true_homo, df.pred_homozygous))
 	# print(confusion_matrix(true_homo, df.pred_homozygous))
 
-	# Plot curves
-	bin_formated_res = [(df.log_ods, 'w={} a={}'.format(w,a)) for w,a,df in results]
-	plot_curves(true_homo, bin_formated_res, pos_label=1, paired=paired)
-	plt.show()
+	# # Plot curves
+	bin_formated_res = [(df.log_odds, 'w={} a={}'.format(w,a)) for w,a,df in results]
+	# plot_curves(true_homo, bin_formated_res, pos_label=1, paired=paired)
+	# plt.show()
 
 	# Plot zoomed in PR curve
+	df_cm_res = [[df, 'w={} a={}'.format(w,a)] for w,a,df in results]
+	# df_cm_res[1][1] += ' just hetero'
+	# df_cm_res[3][1] += ' just hetero'
+
 	plt.figure()
 	pos_label=1
 	lw=2
@@ -181,9 +192,9 @@ if __name__ == '__main__':
 	minor_ticks = np.arange(0, 1, .05)
 	major_ticks = np.arange(0, 1.01, .1)
 
-	for vals, desc in bin_formated_res:
+	for rdf, desc in df_cm_res:
 		precision, recall, threshold = precision_recall_curve(
-			true_homo, vals, pos_label=pos_label)
+			(rdf.genotype != 1).astype(int), rdf.log_odds, pos_label=pos_label)
 
 		plt.plot(recall, precision, label=desc, lw=lw)
 
@@ -205,11 +216,10 @@ if __name__ == '__main__':
 	plt.show()
 
 	# Plot genotype confusion matrices
-	geno_cm_res = [(df, 'w={} a={}'.format(w,a)) for w,a,df in results]
 
 	fig, axs = plt.subplots(1, len(results))
 
-	for i, r in enumerate(geno_cm_res):
+	for i, r in enumerate(df_cm_res):
 		ax = axs[i]
 		ax.set_title('{}'.format(r[1]))
 		
@@ -232,12 +242,12 @@ if __name__ == '__main__':
 	# Plot binary confusion matrices
 	fig, axs = plt.subplots(1, len(results))
 
-	for i, r in enumerate(bin_formated_res):
+	for i, r in enumerate(df_cm_res):
 		ax = axs[i]
 		ax.set_title('{}'.format(r[1]))
 		
-		preds = (r[0] >= 0).astype(int)
-		cm = confusion_matrix(true_homo, preds, normalize=None)	
+		preds = (r[0].log_odds >= 0).astype(int)
+		cm = confusion_matrix((r[0].genotype != 1).astype(int), preds, normalize=None)	
 			
 		sns.heatmap(cm, annot=True, ax=ax, fmt='g', cbar=False)
 		ax.set_xlabel('Predicted genotype')
@@ -269,3 +279,43 @@ if __name__ == '__main__':
 
 		df_joined.to_csv(save_path, na_rep='', sep='\t', index=False)
 		
+
+if __name__ == '__main__':
+	main()
+
+	fragments_path='data/fragments/chr20_1-5M/fragments.txt'
+	longshot_vcf_path='data/fragments/chr20_1-5M/2.0.realigned_genotypes.vcf'
+	ground_truth_vcf_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.vcf'
+	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
+	# site_data_save_path='data/preprocessed/1M_site_data.tsv'
+
+
+	# # df, fragments, qualities = load_full_data(fragments_path, 
+	# # 											longshot_vcf_path, 
+	# # 											ground_truth_vcf_path,
+	# # 											giab_bed_path)
+
+	## Show Longshot output confusion matrices
+	# df, fragments, qualities = load_full_data(
+	# 	fragments_path, 
+	# 	'data/fragments/chr20_1-5M/output.vcf', 
+	# 	ground_truth_vcf_path,
+	# 	giab_bed_path)
+	# gtdf = df[(df.in_bed == 1) & (df.genotype != -1)]
+	# gtdf = gtdf[gtdf.pos.astype(int) < 5000000]
+
+	# # Genotype confusion matrix
+	# cm = confusion_matrix(gtdf.genotype.astype(int), 
+	# 						gtdf.ls_hmm_pred_genotype.astype(int), 
+	# 						normalize=None)	
+			
+	# sns.heatmap(cm, annot=True, fmt='g', cbar=False, xticklabels=[0,1,2])
+	# plt.gca().set_xlabel('Predicted genotype')
+	# plt.gca().set_ylabel('True genotype')
+	
+	# # ax.xaxis.set_ticklabels([0,1,2])
+	# # ax.yaxis.set_ticklabels(['hetero', 'homo'])
+	# plt.gca().set_aspect("equal")
+
+	# plt.title("Longshot Output Confusion Matrices (5Mbp)")
+	# plt.show()
