@@ -290,6 +290,7 @@ def mp_all_zygosity_probabilities(fragments, qualities, to_test_inds, site_data,
 	
 	if n_processes is None:
 		n_processes = psutil.cpu_count(logical=False)
+		print('Using {} processes'.format(n_processes))
 
 	with Pool(n_processes) as p:
 		r = list(tqdm(
@@ -325,6 +326,7 @@ def mp_zygosity_probabilities(fragments, qualities, to_test_inds, site_data,
 	
 	if n_processes is None:
 		n_processes = psutil.cpu_count(logical=False)
+		print('Using {} processes'.format(n_processes))
 
 	with Pool(n_processes) as p:
 		r = list(tqdm(
@@ -445,7 +447,7 @@ def main():
 
 if __name__ == '__main__':
 	alpha = 0.001 			# user defined for site genotype priors
-	window_size = 4
+	window_size = 6
 	save_results = True
 	save_path = 'data/results/1M_predicitions_full_closest_w{}_a{}.tsv'.format(
 		window_size, str(alpha).split('.')[1])
