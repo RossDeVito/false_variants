@@ -12,37 +12,54 @@ from tqdm import tqdm
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.metrics import precision_recall_curve, roc_curve
 
+from utils import load_data, load_longshot_data, matrix_sparsity_info
+from utils import load_full_data
+
 
 np.set_printoptions(edgeitems=5, linewidth=1000)
 
 
-def frag_mat_likelihood(frags, probs, h1, h2):
+def frag_mat_likelihood(frags, quals, h1, h2):
 	row_likelihoods = []
 
 	for frag_row in range(frags.shape[0]):
 		row_likelihoods.append(
-			row_likelihood(frags[frag_row], probs[frag_row], h1, h2)
+			row_likelihood(frags[frag_row], quals[frag_row], h1, h2)
 		)
 
 	return np.prod(row_likelihoods)
 
 
-def row_likelihood(frags, probs, h1, h2):
+def frag_mat_likelihood_complement(frags, quals, h):
+	''' not needed '''
+	row_likelihoods = []
+
+	for frag_row in range(frags.shape[0]):
+		row_likelihoods.append(
+			row_likelihood(frags[frag_row], quals[frag_row], h, (h == 0).astype(int))
+		)
+
+	return np.prod(row_likelihoods)
+
+
+def row_likelihood(frags, quals, h1, h2):
 	return (
-		(row_likelihood_one_h(frags, probs, h1) 
-			+ row_likelihood_one_h(frags, probs, h2))
+		(row_likelihood_one_h(frags, quals, h1) 
+			+ row_likelihood_one_h(frags, quals, h2))
 		/ 2
 	)
 
 
-def row_likelihood_one_h(frags, probs, h):
+def row_likelihood_one_h(frags, quals, h):
 	row_probs = []
 
-	for read, phred_prob, h_val in zip(frags, probs, h):
+	for read, phred, h_val in zip(frags, quals, h):
 		if np.isnan(read):
 			row_probs.append(1)
 		else:
+			phred_prob = 10 ** (-phred / 10)
 			matches_h = int(read == h_val)
+
 			row_probs.append(
 				matches_h * (1 - phred_prob) + (1 - matches_h) * phred_prob
 			)
@@ -137,35 +154,35 @@ def site_prob(haplotype_pair, alpha):
 		return alpha / 4
 
 
-def site_zygosity_probabilities(fragments, probs, site_ind, alpha, progress_bar=False):
+def zygosity_probabilities(fragments, qualities, site_ind, alpha, progress_bar=False):
 	'''
 	Return (P(0/0), P(0/1), P(1/1)) for site in given matrices 
 	by using sumation of probabilities with all posible H.
 	'''
 	window_size = fragments.shape[1]
-	gt_probs = [0., 0., 0.]
+	probs = [0., 0., 0.]
 
 	for H, zygosity in tqdm(gen_H_2(window_size, site_ind), 
 							total=3 * 4 ** (window_size-1),
 							disable=not progress_bar):
 		obs_prob = frag_mat_likelihood(
 						fragments, 
-						probs, 
+						qualities, 
 						H[0], 
 						H[1]
 					)
 		H_prior = H_prob(H, alpha)
 
-		gt_probs[zygosity] += obs_prob * H_prior
+		probs[zygosity] += obs_prob * H_prior
 
-	return gt_probs
+	return probs
 
 
 def mp_run_zygosity_probabilities(args):
 	''' 
 	Unpacks args when running zygosity_probabilities with multiprocessing.
 	'''
-	return site_zygosity_probabilities(args[0], args[1], 0, args[2])
+	return zygosity_probabilities(args[0], args[1], 0, args[2])
 
 
 def all_zygosity_probabilities(fragments, qualities, alpha, window_size):
@@ -214,7 +231,7 @@ class column_generator():
 		self.one_dir = window_size // 2
 		self.is_odd = window_size % 2
 
-	def gen_cols(self, fragments, probs, to_test_inds):
+	def gen_cols(self, fragments, qualities, to_test_inds):
 		for i in to_test_inds:
 			cols = [i]
 
@@ -234,8 +251,7 @@ class column_generator():
 			else:
 				raise RuntimeError()
 
-			yield fragments[:, cols], probs[:, cols], self.alpha
-
+			yield fragments[:, cols], qualities[:, cols], self.alpha
 
 class closest_cols_generator():
 	def __init__(self, alpha, window_size, hetero_inds):
@@ -243,7 +259,7 @@ class closest_cols_generator():
 		self.window_size = window_size
 		self.hetero_inds = np.array(hetero_inds)
 
-	def gen_cols(self, fragments, probs, to_test_inds):
+	def gen_cols(self, fragments, qualities, to_test_inds):
 		for i in to_test_inds:
 			cols = [i]
 
@@ -252,9 +268,9 @@ class closest_cols_generator():
 			others_inds = others_inds[others_inds != i][:self.window_size-1]
 			cols = cols + others_inds.tolist()
 
-			yield fragments[:, cols], probs[:, cols], self.alpha
+			yield fragments[:, cols], qualities[:, cols], self.alpha
 
-	def gen_cols_inds(self, fragments, probs, to_test_inds):
+	def gen_cols_inds(self, fragments, qualities, to_test_inds):
 		for i in to_test_inds:
 			cols = [i]
 
@@ -266,7 +282,43 @@ class closest_cols_generator():
 			yield cols
 
 
-def zygosity_probabilities(fragments, qualities, to_test_inds, site_data, 
+
+def mp_all_zygosity_probabilities(fragments, qualities, to_test_inds, site_data, 
+									alpha, window_size, n_processes=None,
+									return_probs_mat=False):
+	data_gen = column_generator(alpha, window_size)
+	
+	if n_processes is None:
+		n_processes = psutil.cpu_count(logical=False)
+		print('Using {} processes'.format(n_processes))
+
+	with Pool(n_processes) as p:
+		r = list(tqdm(
+				p.imap(
+					mp_run_zygosity_probabilities, 
+					data_gen.gen_cols(fragments, qualities, to_test_inds)
+				),
+				total=len(to_test_inds), 
+				desc='Running tests',
+				smoothing=0.1
+			))
+
+	r = np.vstack(r)
+
+	site_data['window_size'] = window_size
+	site_data['window_size'].astype(int)
+	site_data['alpha'] = alpha
+	site_data['P0'] = r[:, 0]
+	site_data['P1'] = r[:, 1] * 2.
+	site_data['P2'] = r[:, 2]
+
+	if return_probs_mat:
+		return site_data, r
+	else:
+		return site_data
+
+
+def mp_zygosity_probabilities(fragments, qualities, to_test_inds, site_data, 
 									hetero_inds, alpha, window_size, 
 									n_processes=None, return_probs_mat=False):
 	''' Checks given inds using closest of predicted hetero sites '''
@@ -276,14 +328,11 @@ def zygosity_probabilities(fragments, qualities, to_test_inds, site_data,
 		n_processes = psutil.cpu_count(logical=False)
 		print('Using {} processes'.format(n_processes))
 
-	# convert qualities to probabilities
-	probs = np.power(10, -qualities/10)
-
 	with Pool(n_processes) as p:
 		r = list(tqdm(
 				p.imap(
 					mp_run_zygosity_probabilities, 
-					data_gen.gen_cols(fragments, probs, to_test_inds)
+					data_gen.gen_cols(fragments, qualities, to_test_inds)
 				),
 				total=len(to_test_inds), 
 				desc='Running tests',
@@ -344,8 +393,6 @@ def get_site_probabilities(inds, fragments, qualities, alpha,
 def run_cl_site_probs(fragments_path, longshot_vcf_path, site_inds, alpha, 
 						progress_bar=True):
 	''' Runs site probability cl tool '''
-	from utils import load_longshot_data
-
 	print("Loading Longshot output")
 	df, fragments, qualities = load_longshot_data(fragments_path, longshot_vcf_path)
 
@@ -358,18 +405,10 @@ def run_cl_site_probs(fragments_path, longshot_vcf_path, site_inds, alpha,
 
 
 def main():
-	pass
-
-
-if __name__ == '__main__':
-	from_preprocessed = True
-	save_preprocessed = True
-	prepro_save_dir = 'data/preprocessed/chr20_1-1M'
-
 	alpha = 0.001 			# user defined for site genotype priors
-	window_size = 1
-	save_results = True
-	save_path = 'data/results/1M_predicitions_v2_1_w{}_a{}.tsv'.format(
+	window_size = 3
+	save_results = False
+	save_path = 'data/results/1M_predicitions_w{}_a{}.tsv'.format(
 		window_size, str(alpha).split('.')[1])
 
 	fragments_path='data/fragments/chr20_1-1M/fragments.txt'
@@ -378,43 +417,62 @@ if __name__ == '__main__':
 	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
 	site_data_save_path='data/preprocessed/1M_site_data.tsv'
 
-	# Load either preprocessed data or data from vcfs, bed, and fragments.txt
-	if from_preprocessed:
-		print('Loading preprocessed data')
-		df = pd.read_csv(os.path.join(prepro_save_dir, 'df.csv'))
-		fragments = np.load(os.path.join(prepro_save_dir, 'fragments.npy'))
-		qualities = np.load(os.path.join(prepro_save_dir, 'qualities.npy'))
-	else:
-		print('Loading data')
-		from utils import load_full_data
-
-		df, fragments, qualities = load_full_data(
-			fragments_path, 
-			longshot_vcf_path, 
-			ground_truth_vcf_path,
-			giab_bed_path, 
-			save_path=site_data_save_path)
-
-		df = df[df.pos < 1000000] 		# change this with size of Longshot res used
-
-		if save_preprocessed:
-			df.to_csv(os.path.join(prepro_save_dir, 'df.csv'), index=False)
-			np.save(
-				os.path.join(prepro_save_dir, 'fragments.npy'),
-				fragments,
-				fix_imports=False
-			)
-			np.save(
-				os.path.join(prepro_save_dir, 'qualities.npy'),
-				qualities,
-				fix_imports=False
-			)
+	print('Loading data')
+	df, fragments, qualities = load_data(
+		fragments_path, 
+		longshot_vcf_path, 
+		ground_truth_vcf_path,
+		giab_bed_path, 
+		save_path=site_data_save_path)
 
 	# df = df.sample(10)
 
 	to_test = np.where(df.in_bed)[0]
 	
-	res, probs_mat = zygosity_probabilities(
+	res, probs_mat = mp_all_zygosity_probabilities(
+		fragments,
+		qualities,
+		to_test,
+		df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
+		alpha,
+		window_size,
+		return_probs_mat=True
+	)
+
+	res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
+
+	if save_results:
+		res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
+
+
+if __name__ == '__main__':
+	alpha = 0.001 			# user defined for site genotype priors
+	window_size = 1
+	save_results = False
+	save_path = 'data/results/1M_predicitions_full_closest_w{}_a{}.tsv'.format(
+		window_size, str(alpha).split('.')[1])
+
+	fragments_path='data/fragments/chr20_1-1M/fragments.txt'
+	longshot_vcf_path='data/fragments/chr20_1-1M/2.0.realigned_genotypes.vcf'
+	ground_truth_vcf_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.vcf'
+	giab_bed_path='data/GIAB/HG002_GRCh38_1_22_v4.1_draft_benchmark.bed'
+	site_data_save_path='data/preprocessed/1M_site_data.tsv'
+
+	print('Loading data')
+	df, fragments, qualities = load_full_data(
+		fragments_path, 
+		longshot_vcf_path, 
+		ground_truth_vcf_path,
+		giab_bed_path, 
+		save_path=site_data_save_path)
+
+	df = df[df.pos < 1000000] 		# change this with size of Longshot res used
+
+	# df = df.sample(10)
+
+	to_test = np.where(df.in_bed)[0]
+	
+	res, probs_mat = mp_zygosity_probabilities(
 		fragments,
 		qualities,
 		to_test,
@@ -429,3 +487,4 @@ if __name__ == '__main__':
 
 	if save_results:
 		res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
+
