@@ -446,8 +446,8 @@ def main():
 
 
 if __name__ == '__main__':
-	alpha = 0.001 			# user defined for site genotype priors
-	window_size = 6
+	alpha = 0.00125 			# user defined for site genotype priors
+	window_size = 3
 	save_results = True
 	save_path = 'data/results/1M_predicitions_full_closest_w{}_a{}.tsv'.format(
 		window_size, str(alpha).split('.')[1])

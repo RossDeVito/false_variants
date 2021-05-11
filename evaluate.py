@@ -150,6 +150,7 @@ def main():
 		'data/results/1M_predicitions_full_closest_w3_a001.tsv',
 		'data/results/1M_predicitions_full_closest_w4_a001.tsv',
 		'data/results/1M_predicitions_full_closest_w5_a001.tsv',
+		'data/results/1M_predicitions_full_closest_w6_a001.tsv',
 	]
 
 	results = []
