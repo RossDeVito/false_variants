@@ -3,7 +3,7 @@ data/GIAB/*
 !data/GIAB/README.md
 data/preprocessed/*
 !data/preprocessed/chr20_1-500k.npz
-!data/preprocessed/chr20_1-5M/*
+!data/preprocessed/chr20_1-5M/
 data/results/chi_mat_5M.npy
 data/results/fisher_mat_5M.npy
 
