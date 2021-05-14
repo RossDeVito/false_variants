@@ -362,6 +362,8 @@ def main():
 
 
 if __name__ == '__main__':
+	hetero_from='window=1'
+
 	from_preprocessed = True
 	save_preprocessed = True
 	prepro_save_dir = 'data/preprocessed/chr20_1-1M'
@@ -370,7 +372,7 @@ if __name__ == '__main__':
 	window_size = 1
 
 	save_results = True
-	save_path = 'data/results/1M_predicitions_v2_1_w{}_a{}.tsv'.format(
+	save_path = 'data/results/1M_predicitions_v2w1_w{}_a{}.tsv'.format(
 		window_size, str(alpha).split('.')[1])
 
 	fragments_path='data/fragments/chr20_1-1M/fragments.txt'
@@ -413,20 +415,49 @@ if __name__ == '__main__':
 
 	# df = df.sample(10)
 
-	to_test = np.where(df.in_bed)[0]
-	
-	res, probs_mat = zygosity_probabilities(
-		fragments,
-		qualities,
-		to_test,
-		df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
-		df[df.ls_hmm_pred_genotype == 1].site_ind.values.astype(int),
-		alpha,
-		window_size,
-		return_probs_mat=True
-	)
+	if hetero_from == 'longshot':
+		to_test = np.where(df.in_bed)[0]
+		
+		res, probs_mat = zygosity_probabilities(
+			fragments,
+			qualities,
+			to_test,
+			df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
+			df[df.ls_hmm_pred_genotype == 1].site_ind.values.astype(int),
+			alpha,
+			window_size,
+			return_probs_mat=True
+		)
 
-	res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
+		res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
+	elif hetero_from == 'window=1':
+		to_test = df.site_ind.values.astype(int)
+		
+		w1_res = zygosity_probabilities(
+			fragments,
+			qualities,
+			to_test,
+			df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
+			to_test,
+			alpha,
+			1
+		)
+
+		w1_res_df = pd.merge(df, w1_res, how='left', on=['site_ind', 'chrom', 'pos'])
+
+		to_test = np.where(df.in_bed)[0]
+		
+		res = zygosity_probabilities(
+			fragments,
+			qualities,
+			to_test,
+			df[['site_ind', 'chrom', 'pos']].iloc[to_test].reset_index(drop=True),
+			w1_res_df[w1_res_df.P1 >= (w1_res_df.P0 + w1_res_df.P2)].site_ind.values.astype(int),
+			alpha,
+			window_size
+		)
+
+		res_df = pd.merge(df, res, how='left', on=['site_ind', 'chrom', 'pos'])
 
 	if save_results:
 		res_df.to_csv(save_path, na_rep='', sep='\t', index=False)
